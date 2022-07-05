@@ -34,6 +34,7 @@ default-extensions:
   - TypeOperators
   - TypeFamilies
   - TemplateHaskell
+  - RecordWildCards
 
   # Deriving extensions
   - GeneralizedNewtypeDeriving
@@ -65,6 +66,8 @@ dependencies:
 - sqlite-simple
 - acid-state
 - safecopy
+- registry
+- safe
 
 # Swagger UI
 - servant-docs
@@ -77,7 +80,7 @@ dependencies:
 
 library:
   source-dirs: src
-  ghc-options: -O2 -flate-specialise -fspecialise-aggressively 
+  ghc-options: -O2 -flate-specialise -fspecialise-aggressively
 
 executables:
   PolysemyCleanArchitecture:

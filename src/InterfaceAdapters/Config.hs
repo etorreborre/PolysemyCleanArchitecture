@@ -6,6 +6,6 @@ data Config = Config {
 , backend     :: Backend -- ^ selects the persistence backend for the KV store
 , dbPath      :: String  -- ^ the path to the database
 , verbose     :: Bool    -- ^ True enables logging
-}
+} deriving (Eq, Show)
 
 data Backend = SQLite | FileServer deriving (Show, Eq)

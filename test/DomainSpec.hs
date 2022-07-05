@@ -6,34 +6,6 @@ import           GHC.Natural              (Natural (..), naturalFromInteger)
 import           Test.Hspec
 import           Test.QuickCheck
 
-main :: IO ()
-main = hspec spec
-
-instance Arbitrary Natural where
-  arbitrary = do
-    NonNegative nonNegative <- arbitrary
-    return $ naturalFromInteger nonNegative
-
-instance Arbitrary Reservation where
-  arbitrary = do
-    natural <- arbitrary
-    return $ Reservation day "Jupp0" "jupp@jupp.com" natural
-
-day :: Day
-day = fromGregorian 2020 2 29
-
-res1 :: Reservation
-res1 = Reservation day "Andrew M. Jones" "amjones@example.com" 4
-
-res2 :: Reservation
-res2 = Reservation day "Thomas Miller" "tm@example.com" 3
-
-reservations :: [Reservation]
-reservations = [res1, res2]
-
-totalCapacity :: Natural
-totalCapacity = 20
-
 spec :: Spec
 spec =
   describe "Domain Logic" $ do
@@ -82,3 +54,31 @@ spec =
       cancelReservation res1 [] `shouldBe` []
       cancelReservation res2 reservations `shouldBe` [res1]
       cancelReservation res2 (cancelReservation res1 reservations) `shouldBe` []
+
+-- * HELPERS
+
+main :: IO ()
+main = hspec spec
+
+instance Arbitrary Natural where
+  arbitrary = do
+    NonNegative nonNegative <- arbitrary
+    return $ naturalFromInteger nonNegative
+
+instance Arbitrary Reservation where
+  arbitrary = Reservation day "Jupp0" "jupp@jupp.com" <$> arbitrary
+
+day :: Day
+day = fromGregorian 2020 2 29
+
+res1 :: Reservation
+res1 = Reservation day "Andrew M. Jones" "amjones@example.com" 4
+
+res2 :: Reservation
+res2 = Reservation day "Thomas Miller" "tm@example.com" 3
+
+reservations :: [Reservation]
+reservations = [res1, res2]
+
+totalCapacity :: Natural
+totalCapacity = 20

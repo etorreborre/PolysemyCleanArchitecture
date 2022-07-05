@@ -1,61 +1,66 @@
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# OPTIONS_GHC -fno-warn-missing-signatures #-}
+{-# OPTIONS_GHC -fno-warn-partial-type-signatures #-}
+
 module ExternalInterfaces.ApplicationAssembly where
 
-import           Control.Monad.Except                     (ExceptT(ExceptT))
-import           Data.ByteString.Lazy.Char8               (pack)
-import           Data.Function                            ((&))
-import           InterfaceAdapters.Config                 (Backend(SQLite, FileServer), Config(..))
-import           InterfaceAdapters.KVSFileServer          (runKvsAsFileServer)
-import           InterfaceAdapters.KVSSqlite              (runKvsAsSQLite)
-import           InterfaceAdapters.ReservationRestService (reservationAPI, reservationServer, ReservationAPI)
-import           Polysemy                                 (Sem, runM, Embed, Member)
-import           Polysemy.Error                           (Error, runError)
-import           Polysemy.Input                           (Input, runInputConst)
-import           Polysemy.Trace                           (Trace, traceToStdout, ignoreTrace)
-import           Servant.Server                           (serve, errBody, err412, Handler(..), ServerT, Application, hoistServer, ServerError)
-import           UseCases.KVS                             (KVS)
-import           UseCases.ReservationUseCase              (ReservationError(..))
-import           Data.Aeson.Types                         (ToJSON, FromJSON)
+import Data.Registry
+import Data.Registry.Internal.Types
+import Data.Time.Calendar (Day)
+import Data.Typeable
+import Domain.ReservationDomain
+import InterfaceAdapters.Config
+import InterfaceAdapters.FileServerStore
+import InterfaceAdapters.ReservationRestService
+import InterfaceAdapters.SqliteStore
+import InterfaceAdapters.StdoutTracer
+import InterfaceAdapters.WarpWebApp
+import Network.Wai.Handler.Warp (run)
+import Servant.Server
+import UseCases.Reservations
+import UseCases.Store
+import UseCases.Tracer
+import UseCases.WebApp
 
--- | creates the WAI Application that can be executed by Warp.run.
--- All Polysemy interpretations must be executed here.
-createApp :: Config -> Application
-createApp config = serve reservationAPI (liftServer config)
+data App = App
+  { configuration :: Config,
+    tracer :: Tracer IO,
+    store :: Store Day [Reservation] IO,
+    reservations :: Reservations IO,
+    reservationApi :: ReservationApi,
+    reservationServer :: ServerT ReservationAPI Handler,
+    webApp :: WebApp
+  }
 
+makeApp :: Config -> IO App
+makeApp config = make @(IO App) (add config <: components)
 
-liftServer :: Config -> ServerT ReservationAPI Handler
-liftServer config = hoistServer reservationAPI (interpretServer config) reservationServer
-  where
-    interpretServer :: (Show k, Read k, ToJSON v, FromJSON v)
-                    => Config -> Sem '[KVS k v, Input Config, Trace, Error ReservationError, Embed IO] a -> Handler a
-    interpretServer conf sem  =  sem
-          & runSelectedKvsBackend conf
-          & runInputConst conf
-          & runSelectedTrace conf
-          & runError @ReservationError
-          & runM
-          & liftToHandler
+makeWaiApplication :: App -> Application
+makeWaiApplication App {..} = serve reservationAPI reservationServer
 
-    liftToHandler :: IO (Either ReservationError a) -> Handler a
-    liftToHandler = Handler . ExceptT . fmap handleErrors
+components :: Registry _ _
+components =
+  add App
+    <: add newWarpWebApp
+    <: add newReservationServer
+    <: add newReservationApi
+    <: add (newReservations @IO)
+    <: add newBackendStore
+    <: add newTracer
+    <: add backend
+    <: add productionConfig
 
-    handleErrors :: Either ReservationError b -> Either ServerError b
-    handleErrors (Left (ReservationNotPossible msg)) = Left err412 { errBody = pack msg}
-    handleErrors (Right value) = Right value
+newBackendStore :: Config -> Tracer IO -> Backend -> Store Day [Reservation] IO
+newBackendStore config tracer SQLite = newSqliteStore config tracer
+newBackendStore _ tracer FileServer = newFileServerStore
 
--- | can select between SQLite or FileServer persistence backends.
-runSelectedKvsBackend :: (Member (Input Config) r, Member (Embed IO) r, Member Trace r, Show k, Read k, ToJSON v, FromJSON v)
-                 => Config -> Sem (KVS k v : r) a -> Sem r a
-runSelectedKvsBackend config = case backend config of
-  SQLite     -> runKvsAsSQLite
-  FileServer -> runKvsAsFileServer
-  
--- | if the config flag verbose is set to True, trace to Console, else ignore all trace messages
-runSelectedTrace :: (Member (Embed IO) r) => Config -> (Sem (Trace : r) a -> Sem r a)
-runSelectedTrace config =
-  if verbose config
-    then traceToStdout
-    else ignoreTrace
-    
 -- | load application config. In real life, this would load a config file or read commandline args.
 loadConfig :: IO Config
-loadConfig = return Config {port = 8080, backend = SQLite, dbPath = "kvs.db", verbose = True}
+loadConfig = return productionConfig
+
+productionConfig :: Config
+productionConfig = Config {port = 8080, backend = SQLite, dbPath = "kvs.db", verbose = True}
+
+-- | Registry shortcut
+add :: forall a b. (ApplyVariadic IO a b, Typeable a, Typeable b) => a -> Typed b
+add = funTo @IO
